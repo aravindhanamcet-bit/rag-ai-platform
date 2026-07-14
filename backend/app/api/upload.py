@@ -1,8 +1,9 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 import shutil
 import os
 from datetime import datetime
-from langchain_community.document_loaders import PyPDFLoader
+from pypdf import PdfReader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 import chromadb
@@ -29,6 +30,22 @@ def clean_extracted_text(text: str) -> str:
     cleaned = re.sub(r'\s+', ' ', cleaned)
     cleaned = re.sub(r'\n\s*\n', '\n\n', cleaned)
     return cleaned.strip()
+
+
+def load_pdf(filepath: str):
+    """
+    Load a PDF into LangChain Document objects using pypdf directly,
+    avoiding the heavier langchain-community dependency chain.
+    """
+    reader = PdfReader(filepath)
+    docs = [
+        Document(
+            page_content=page.extract_text() or "",
+            metadata={"source": filepath, "page": i},
+        )
+        for i, page in enumerate(reader.pages)
+    ]
+    return docs
 
 
 def reset_vector_store():
@@ -64,6 +81,8 @@ def reset_vector_store():
 
 @router.post("/")
 async def upload_file(file: UploadFile = File(...)):
+
+    result = None  # defined upfront so the except block can safely reference it
 
     try:
 
@@ -128,8 +147,7 @@ async def upload_file(file: UploadFile = File(...)):
         # -------------------------------------------------
         # Load PDF
         # -------------------------------------------------
-        loader = PyPDFLoader(filepath)
-        docs = loader.load()
+        docs = load_pdf(filepath)
 
         print(f"✅ Loaded {len(docs)} pages")
 
@@ -200,20 +218,23 @@ async def upload_file(file: UploadFile = File(...)):
         import traceback
         traceback.print_exc()
 
-        try:
-            files_collection.update_one(
-                {"_id": result.inserted_id},
-                {
-                    "$set": {
-                        "vector_index_status": "failed",
-                        "error": str(e),
-                    }
-                },
-            )
-        except:
-            pass
+        if result is not None:
+            try:
+                files_collection.update_one(
+                    {"_id": result.inserted_id},
+                    {
+                        "$set": {
+                            "vector_index_status": "failed",
+                            "error": str(e),
+                        }
+                    },
+                )
+            except:
+                pass
 
-        return {
-            "message": "File upload failed.",
-            "error": str(e),
-        }
+        # Raise a real HTTP error instead of returning 200, so the
+        # frontend's axios `catch` block correctly detects the failure.
+        raise HTTPException(
+            status_code=500,
+            detail=f"File upload failed: {str(e)}",
+        )

@@ -1,5 +1,5 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -25,9 +25,14 @@ def get_llm():
 
 
 def get_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
+    # Confirmed via a direct REST call to
+    # https://generativelanguage.googleapis.com/v1beta/models
+    # that this key supports "models/gemini-embedding-001" for embedContent.
+    # (Both "models/embedding-001" and "models/text-embedding-004" 404
+    # on this key/API version — don't reintroduce them.)
+    return GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-001",
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
     )
 
 
