@@ -1,0 +1,70 @@
+# =====================================
+# Backend
+# =====================================
+
+# Virtual Environment
+backend/venv/
+
+# Environment Variables
+backend/.env
+
+# Python Cache
+backend/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/**/*.pyd
+
+# Chroma Vector Database
+backend/vectorstore/
+backend/vector_db/
+
+# Uploaded Files
+backend/app/uploads/
+
+# Logs
+backend/*.log
+backend/**/*.log
+
+# =====================================
+# Frontend
+# =====================================
+
+# Node Modules
+frontend/node_modules/
+
+# Production Build
+frontend/dist/
+
+# Environment Variables
+frontend/.env
+
+# =====================================
+# VS Code
+# =====================================
+
+.vscode/
+
+# =====================================
+# JetBrains
+# =====================================
+
+.idea/
+
+# =====================================
+# OS Files
+# =====================================
+
+.DS_Store
+Thumbs.db
+
+# =====================================
+# Git
+# =====================================
+
+*.tmp
+*.swp
+*.bak
+
+# Temporary debug files
+backend/models.txt
+backend/diagnose_vectorstore.py
