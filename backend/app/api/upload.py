@@ -18,8 +18,30 @@ router = APIRouter(prefix="/upload")
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 UPLOAD_DIR = os.path.join(BASE_DIR, "app", "uploads")
 VECTORSTORE_DIR = os.path.join(BASE_DIR, "vectorstore")
+COLLECTION_NAME = "langchain"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(VECTORSTORE_DIR, exist_ok=True)
+
+# -------------------------------------------------------------------
+# Single, process-wide Chroma client.
+#
+# IMPORTANT: chromadb's Rust core caches its SQLite connection per
+# directory path for the lifetime of the process. Previously this code
+# deleted VECTORSTORE_DIR on every upload and reopened a brand new
+# PersistentClient at the same path — but the cached connection from
+# the *previous* client would still be referencing the now-deleted
+# database file, causing:
+#
+#   chromadb.errors.InternalError: Database error: error returned
+#   from database: (code: 1032) attempt to write a readonly database
+#
+# on every upload after the first. The fix is to open ONE client for
+# the whole process and clear data through it (delete/recreate the
+# collection), never delete the directory on disk while the process
+# is running.
+# -------------------------------------------------------------------
+_chroma_client = chromadb.PersistentClient(path=VECTORSTORE_DIR)
 
 
 def clean_extracted_text(text: str) -> str:
@@ -50,33 +72,20 @@ def load_pdf(filepath: str):
 
 def reset_vector_store():
     """
-    Fully reset the Chroma vector store by:
-    1. Deleting all collections via chromadb client
-    2. Deleting the directory on disk
+    Clear all existing data from the vector store WITHOUT deleting the
+    underlying directory/database file on disk, and WITHOUT creating a
+    new client. Reuses the single process-wide _chroma_client so its
+    internal connection stays valid.
     """
     try:
-        # Step 1: Connect to Chroma and delete all collections
-        if os.path.exists(VECTORSTORE_DIR):
-            client = chromadb.PersistentClient(path=VECTORSTORE_DIR)
-            collections = client.list_collections()
-            for col in collections:
-                client.delete_collection(col.name)
-                print(f"🗑️ Deleted Chroma collection: {col.name}")
-            del client
+        collections = _chroma_client.list_collections()
+        for col in collections:
+            _chroma_client.delete_collection(col.name)
+            print(f"🗑️ Deleted Chroma collection: {col.name}")
     except Exception as e:
         print(f"Warning: Could not clear Chroma collections: {e}")
 
-    try:
-        # Step 2: Delete the directory on disk
-        if os.path.exists(VECTORSTORE_DIR):
-            shutil.rmtree(VECTORSTORE_DIR, ignore_errors=True)
-            print("🗑️ Vector store directory deleted")
-    except Exception as e:
-        print(f"Warning: Could not delete vector store directory: {e}")
-
-    # Step 3: Recreate empty directory
-    os.makedirs(VECTORSTORE_DIR, exist_ok=True)
-    print("✅ Fresh vector store directory created")
+    print("✅ Vector store cleared (directory untouched)")
 
 
 @router.post("/")
@@ -99,7 +108,7 @@ async def upload_file(file: UploadFile = File(...)):
                         print(f"Could not delete {existing_file}: {e}")
 
         # -------------------------------------------------
-        # Fully Reset Vector Store
+        # Clear Vector Store (in place, same client)
         # -------------------------------------------------
         reset_vector_store()
 
@@ -178,20 +187,20 @@ async def upload_file(file: UploadFile = File(...)):
             print(splits[0].page_content[:250])
 
         # -------------------------------------------------
-        # Create Embeddings & New Vector Store
+        # Create Embeddings & Populate Vector Store
+        # (reuse the same process-wide client — do NOT create a
+        # new PersistentClient here)
         # -------------------------------------------------
         embeddings = get_embeddings()
 
-        vectorstore = Chroma.from_documents(
-            documents=splits,
-            embedding=embeddings,
-            persist_directory=VECTORSTORE_DIR,
+        vectorstore = Chroma(
+            client=_chroma_client,
+            collection_name=COLLECTION_NAME,
+            embedding_function=embeddings,
         )
+        vectorstore.add_documents(splits)
 
-        # Release Handle
-        del vectorstore
-
-        print("\n✅ New Vector Store Created")
+        print("\n✅ Vector Store Populated")
         print(f"Location : {VECTORSTORE_DIR}")
         print(f"Total chunks stored: {len(splits)}")
 
